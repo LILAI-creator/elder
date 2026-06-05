@@ -97,7 +97,9 @@ def main(video_path=None):
         cv2.imshow("Fall Detection", frame)
 
         fps = cap.get(cv2.CAP_PROP_FPS)
-        delay = max(1, int(1000 / fps)) if fps > 0 else 33
+        # delay = max(1, int(1000 / fps)) if fps > 0 else 33
+        # 播放速度 
+        delay = 100
         if cv2.waitKey(delay) & 0xFF == ord("q"):
             break
 
