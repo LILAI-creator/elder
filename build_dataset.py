@@ -98,7 +98,7 @@ def main():
                 stats["normal"] += len(range(0, T - WINDOW_SIZE + 1, STRIDE))
             else:
                 print(f"Processing {name} (fall_start={fall_start}, fall_end={fall_end})")
-                pre_fall = fall_start - WINDOW_SIZE
+                pre_fall = max(0, fall_start - 90)
                 for start in range(0, T - WINDOW_SIZE + 1, STRIDE):
                     end = start + WINDOW_SIZE
                     x = features[start:end]

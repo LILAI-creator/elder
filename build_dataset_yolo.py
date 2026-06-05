@@ -157,7 +157,7 @@ def main():
                     })
                 stats["normal"] += len(range(0, T - WINDOW_SIZE + 1, STRIDE))
             else:
-                pre_fall = fall_start - WINDOW_SIZE
+                pre_fall = max(0, fall_start - 90)
                 for start in range(0, T - WINDOW_SIZE + 1, STRIDE):
                     end = start + WINDOW_SIZE
                     x = features[start:end]
@@ -169,7 +169,7 @@ def main():
                         stats["fall_after"] += 1
                     elif last_frame_idx >= pre_fall:
                         time = max(0, fall_end - 1 - last_frame_idx)
-                        risk = 1.0 / (1.0 + time)
+                        risk = 1.0 / (1.0 + time * 0.1)
                         stats["fall_process"] += 1
                     else:
                         risk = 0.0
