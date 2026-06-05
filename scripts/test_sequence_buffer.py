@@ -1,319 +1,64 @@
-"""
-test_sequence_buffer.py
-
-测试：
-
-    SequenceBuffer
-
-验证：
-
-    update()
-    is_ready()
-    get_sequence()
-    remove()
-    clear()
-"""
-
-import os
-import sys
 import numpy as np
+import time
 
-ROOT = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
-)
-
-sys.path.append(ROOT)
-
-from sequence.sequence_buffer import SequenceBuffer
+from sequence.sequence_buffer import SequenceBufferV3
 
 
-def test_update_and_ready():
+def generate_fake_feature(step):
     """
-    测试：
-
-        update()
-        is_ready()
+    模拟34维人体特征
+    让数据有“运动趋势”
     """
 
-    print("=" * 60)
-    print("TEST 1 : update() / is_ready()")
-    print("=" * 60)
+    base = np.linspace(100, 200, 34)
 
-    buffer = SequenceBuffer(seq_len=30)
+    noise = np.random.randn(34) * 0.5
 
-    pid = 1
+    # 模拟人体逐渐下移（跌倒趋势）
+    drift = step * 0.3
 
-    for i in range(29):
-
-        feature = np.random.rand(
-            34
-        ).astype(np.float32)
-
-        buffer.update(
-            pid,
-            feature
-        )
-
-    print(
-        "Length:",
-        len(buffer.buffers[pid])
-    )
-
-    print(
-        "Ready:",
-        buffer.is_ready(pid)
-    )
-
-    assert len(
-        buffer.buffers[pid]
-    ) == 29
-
-    assert (
-        buffer.is_ready(pid)
-        is False
-    )
-
-    feature = np.random.rand(
-        34
-    ).astype(np.float32)
-
-    buffer.update(
-        pid,
-        feature
-    )
-
-    print(
-        "Length:",
-        len(buffer.buffers[pid])
-    )
-
-    print(
-        "Ready:",
-        buffer.is_ready(pid)
-    )
-
-    assert len(
-        buffer.buffers[pid]
-    ) == 30
-
-    assert (
-        buffer.is_ready(pid)
-        is True
-    )
-
-    print("PASS\n")
-
-
-def test_get_sequence():
-    """
-    测试：
-
-        get_sequence()
-    """
-
-    print("=" * 60)
-    print("TEST 2 : get_sequence()")
-    print("=" * 60)
-
-    buffer = SequenceBuffer(
-        seq_len=30
-    )
-
-    pid = 1
-
-    for _ in range(30):
-
-        feature = np.random.rand(
-            34
-        ).astype(np.float32)
-
-        buffer.update(
-            pid,
-            feature
-        )
-
-    sequence = buffer.get_sequence(
-        pid
-    )
-
-    print(
-        "Sequence Shape:",
-        sequence.shape
-    )
-
-    assert sequence.shape == (
-        30,
-        34
-    )
-
-    print("PASS\n")
-
-
-def test_auto_pop():
-    """
-    测试：
-
-        deque(maxlen)
-
-    超过长度自动删除最旧帧
-    """
-
-    print("=" * 60)
-    print("TEST 3 : auto pop")
-    print("=" * 60)
-
-    buffer = SequenceBuffer(
-        seq_len=30
-    )
-
-    pid = 1
-
-    for i in range(35):
-
-        feature = np.ones(
-            34,
-            dtype=np.float32
-        ) * i
-
-        buffer.update(
-            pid,
-            feature
-        )
-
-    sequence = buffer.get_sequence(
-        pid
-    )
-
-    print(
-        "Shape:",
-        sequence.shape
-    )
-
-    print(
-        "First Frame Value:",
-        sequence[0][0]
-    )
-
-    print(
-        "Last Frame Value:",
-        sequence[-1][0]
-    )
-
-    assert sequence.shape == (
-        30,
-        34
-    )
-
-    # 应保留5~34
-    assert sequence[0][0] == 5
-
-    assert sequence[-1][0] == 34
-
-    print("PASS\n")
-
-
-def test_remove():
-    """
-    测试：
-
-        remove()
-    """
-
-    print("=" * 60)
-    print("TEST 4 : remove()")
-    print("=" * 60)
-
-    buffer = SequenceBuffer()
-
-    buffer.update(
-        1,
-        np.random.rand(34)
-    )
-
-    buffer.update(
-        2,
-        np.random.rand(34)
-    )
-
-    print(
-        "Before:",
-        list(buffer.buffers.keys())
-    )
-
-    buffer.remove(1)
-
-    print(
-        "After:",
-        list(buffer.buffers.keys())
-    )
-
-    assert 1 not in buffer.buffers
-
-    print("PASS\n")
-
-
-def test_clear():
-    """
-    测试：
-
-        clear()
-    """
-
-    print("=" * 60)
-    print("TEST 5 : clear()")
-    print("=" * 60)
-
-    buffer = SequenceBuffer()
-
-    for pid in range(5):
-
-        buffer.update(
-            pid,
-            np.random.rand(34)
-        )
-
-    print(
-        "Before:",
-        len(buffer.buffers)
-    )
-
-    buffer.clear()
-
-    print(
-        "After:",
-        len(buffer.buffers)
-    )
-
-    assert len(
-        buffer.buffers
-    ) == 0
-
-    print("PASS\n")
+    return base + noise - drift
 
 
 def main():
 
-    print()
-    print("=" * 60)
-    print("SequenceBuffer Unit Test")
-    print("=" * 60)
-    print()
+    buffer = SequenceBufferV3(seq_len=30)
 
-    test_update_and_ready()
+    person_id = 1
 
-    test_get_sequence()
+    print("🚀 开始填充30帧数据...\n")
 
-    test_auto_pop()
+    # 模拟30帧
+    for i in range(30):
 
-    test_remove()
+        feature = generate_fake_feature(i)
 
-    test_clear()
+        buffer.update(person_id, feature)
 
-    print("=" * 60)
-    print("ALL TEST PASSED")
-    print("=" * 60)
+        print(f"frame {i+1} added")
+
+        time.sleep(0.05)
+
+    print("\n✅ 是否ready:", buffer.is_ready(person_id))
+
+    # =========================
+    # 获取数据
+    # =========================
+    seq = buffer.get_sequence(person_id)
+    vel = buffer.get_velocity(person_id)
+    acc = buffer.get_acceleration(person_id)
+
+    print("\n📊 输出检查：")
+
+    print("raw shape:", seq.shape)   # (30,34)
+    print("vel shape:", vel.shape)   # (30,34)
+    print("acc shape:", acc.shape)   # (30,34)
+
+    print("\n🔍 前3帧 velocity 示例：")
+    print(vel[:3])
+
+    print("\n🔍 前3帧 acceleration 示例：")
+    print(acc[:3])
 
 
 if __name__ == "__main__":

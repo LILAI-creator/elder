@@ -1,76 +1,32 @@
 import numpy as np
 
+class FeatureBuilderV3:
+    """
+    FeatureBuilderV3: 构建每帧人体关键点特征向量（v3标准）
+    
+    输入：
+        kpts  - numpy array, (17,2)，每帧17个关键点的(x, y)坐标
+        confs - numpy array, (17,)，对应每个关键点的置信度
+    输出：
+        feature - numpy array, (51,)，每帧flatten后的(x, y, conf)特征
+    """
 
-class FeatureBuilder:
+    def __init__(self):
+        # 目前不需要初始化参数
+        pass
 
-    @staticmethod
-    def build(keypoints):
+    def build(self, kpts, confs):
         """
-        输入:
-            keypoints (17,2)
-
-        输出:
-            feature (34,)
+        构建单帧特征向量
         """
 
-        keypoints = np.asarray(keypoints, dtype=np.float32)
+        # 将置信度从(17,)转为(17,1)列向量，方便和坐标拼接
+        confs = confs.reshape(-1, 1)  # (17,1)
 
-        if keypoints.shape != (17, 2):
-            return np.zeros(34, dtype=np.float32)
+        # 将关键点坐标和置信度沿列拼接
+        # kpts: (17,2), confs: (17,1) => feature: (17,3)
+        feature = np.concatenate([kpts, confs], axis=1)  # (17,3)
 
-        # ==================================================
-        # 1. 原始坐标（最重要）
-        # ==================================================
-        raw = keypoints.reshape(-1)
-
-        # ==================================================
-        # 2. 人体中心点
-        # ==================================================
-        center = np.mean(keypoints, axis=0)
-
-        # ==================================================
-        # 3. bbox信息
-        # ==================================================
-        x_min, y_min = np.min(keypoints, axis=0)
-        x_max, y_max = np.max(keypoints, axis=0)
-
-        width = x_max - x_min
-        height = y_max - y_min
-
-        aspect_ratio = width / (height + 1e-6)
-
-        # ==================================================
-        # 4. 躯干倾斜（关键跌倒信号）
-        # ==================================================
-        try:
-            shoulder = keypoints[5]
-            hip = keypoints[11]
-            torso_vec = shoulder - hip
-            torso_angle = np.arctan2(torso_vec[1], torso_vec[0])
-        except:
-            torso_angle = 0.0
-
-        # ==================================================
-        # 5. 稳定性（关键！）
-        # ==================================================
-        keypoints_var = np.var(keypoints)
-
-        # ==================================================
-        # 6. 拼接额外特征（6维）
-        # ==================================================
-        extra = np.array([
-            center[0],
-            center[1],
-            width,
-            height,
-            aspect_ratio,
-            torso_angle
-        ], dtype=np.float32)
-
-        # ==================================================
-        # 7. 输出（必须保持34维）
-        # ==================================================
-        # 用压缩方式：只取 raw 的前28维 + 6维extra = 34维
-        raw_compressed = raw[:28]
-
-        return np.concatenate([raw_compressed, extra])
+        # 将每帧特征展平为一维向量
+        # 原本每帧是17个点，每点3个值 => 17*3=51维
+        return feature.reshape(-1)  # (51,)

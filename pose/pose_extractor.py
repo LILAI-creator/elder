@@ -80,3 +80,16 @@ class PoseExtractor:
             persons.append(person)
 
         return persons
+
+    @staticmethod
+    def build_feature(person):
+        """
+        把单个人的keypoints转成模型输入
+        """
+
+        kpts = person["keypoints"]  # (17,2)
+
+        # 拉平
+        feature = kpts.reshape(-1)  # (34,)
+
+        return feature
