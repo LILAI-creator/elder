@@ -4,6 +4,7 @@ import numpy as np
 from pose.pose_extractor import PoseExtractor
 from sequence.sequence_buffer import SequenceBufferV3
 from classifier.lstm_classifier import LSTMClassifier
+from features.feature_builder import FeatureBuilder
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 POSE_MODEL = os.path.join(MODEL_DIR, "yolo11n-pose.pt")
@@ -13,7 +14,8 @@ NORM_PARAMS = os.path.join(MODEL_DIR, "norm_params.npz")
 WINDOW_SIZE = 30
 
 
-def build_102_feature(buffer, person_id):
+def build_motion_feature(buffer, person_id):
+    """拼接 [pos(57) | vel(57) | acc(57)] → (30, 171)"""
     raw = buffer.get_sequence(person_id)
     if raw is None:
         return None
@@ -50,21 +52,21 @@ def main():
 
         person = persons[0]
         kpts = person["keypoints"]
-        feature = kpts.reshape(-1)
+        feature = FeatureBuilder.build(kpts)
 
         buffer.update(0, feature)
 
         if buffer.is_ready(0):
-            seq_102 = build_102_feature(buffer, 0)
-            if seq_102 is not None:
-                result = classifier.predict(seq_102)
+            seq_171 = build_motion_feature(buffer, 0)
+            if seq_171 is not None:
+                result = classifier.predict(seq_171)
                 results_log.append((frame_count, result["risk"], result["time"], result["label"]))
 
                 if frame_count % 10 == 0 or result["risk"] > 0.3:
                     raw = buffer.get_sequence(0)
                     print(f"Frame {frame_count}: risk={result['risk']:.4f}, time={result['time']:.1f}, label={result['label']}")
                     print(f"  raw range: [{raw.min():.2f}, {raw.max():.2f}]")
-                    normed = (seq_102 - mean) / std
+                    normed = (seq_171 - mean) / std
                     print(f"  normed range: [{normed.min():.2f}, {normed.max():.2f}]")
 
     cap.release()

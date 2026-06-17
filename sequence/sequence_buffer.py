@@ -2,14 +2,16 @@ from collections import deque
 import numpy as np
 
 
+
+
 class SequenceBufferV3:
     """
     工业级跌倒趋势缓存器（v3）
 
     输出：
-        raw: (T, 34)
-        vel: (T, 34)
-        acc: (T, 34)
+        raw: (T, 57)
+        vel: (T, 57)
+        acc: (T, 57)
     """
 
     def __init__(self, seq_len=30):
@@ -21,13 +23,13 @@ class SequenceBufferV3:
     # ==================================================
     def update(self, person_id, feature):
         """
-        feature: (34,)
+        feature: (57,)
         """
 
         feature = np.asarray(feature, dtype=np.float32)
 
         # ❗异常过滤（工业必须）
-        if feature.shape != (34,):
+        if feature.ndim != 1:
             return
 
         if np.isnan(feature).any():
@@ -100,3 +102,7 @@ class SequenceBufferV3:
 
     def __repr__(self):
         return f"SequenceBufferV3(persons={len(self.buffers)}, seq_len={self.seq_len})"
+
+
+# 向后兼容别名
+SequenceBuffer = SequenceBufferV3

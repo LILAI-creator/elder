@@ -2,7 +2,7 @@
 fall_detector.py
 
 功能：
-    跌倒检测流水线
+    跌倒检测流水线（多人实时）
 
 流程：
 
@@ -12,14 +12,18 @@ fall_detector.py
       ↓
     PersonTracker
       ↓
-    FeatureBuilder
+    FeatureBuilder  (57维)
       ↓
-    SequenceBuffer
+    SequenceBuffer  (30帧缓存)
       ↓
-    LSTMClassifier
+    拼接 [pos(57) + vel(57) + acc(57)] = (30,171)
       ↓
-    Fall Result
+    LSTMClassifier  → {risk, time, label}
+      ↓
+    RiskEngine  → SAFE / WARNING / DANGER
 """
+
+import numpy as np
 
 from pose.pose_extractor import PoseExtractor
 from tracker.person_tracker import PersonTracker
@@ -27,6 +31,22 @@ from features.feature_builder import FeatureBuilder
 from sequence.sequence_buffer import SequenceBuffer
 from classifier.lstm_classifier import LSTMClassifier
 from pipeline.risk_engine import RiskEngine
+
+# 当前 FeatureBuilder 输出维度
+FEATURE_DIM = 57  # 51基础(17×3) + 6几何特征
+
+
+def build_motion_feature(buffer, person_id):
+    """
+    拼接 [位置, 速度, 加速度] → (30, FEATURE_DIM*3)
+    """
+    raw = buffer.get_sequence(person_id)
+    if raw is None:
+        return None
+    vel = buffer.get_velocity(person_id)
+    acc = buffer.get_acceleration(person_id)
+    return np.concatenate([raw, vel, acc], axis=1)
+
 
 class FallDetector:
     """
@@ -40,12 +60,11 @@ class FallDetector:
             norm_path,
             seq_len=30
     ):
-        
 
-
-       
+        # -----------------------------
+        # Risk Engine
+        # -----------------------------
         self.risk_engine = RiskEngine()
-
 
         # -----------------------------
         # Pose
@@ -81,11 +100,11 @@ class FallDetector:
         """
         Parameters
         ----------
-        frame : ndarray
+        frame : ndarray  (H, W, 3)
 
         Returns
         -------
-        list
+        list[dict]
         """
 
         # ==================================================
@@ -94,13 +113,14 @@ class FallDetector:
         persons = self.pose_extractor.extract(frame)
 
         # ==================================================
-        # 2. Tracking（🔥关键修复点）
+        # 2. Tracking
         # ==================================================
         tracks, removed_ids = self.tracker.update(persons)
 
         # 清理已消失的ID
         for rid in removed_ids:
             self.buffer.remove(rid)
+            self.risk_engine.reset(rid)
 
         results = []
 
@@ -118,7 +138,7 @@ class FallDetector:
             keypoints = track["keypoints"]
 
             # -----------------------------
-            # Feature
+            # Feature (57维)
             # -----------------------------
             feature = FeatureBuilder.build(keypoints)
 
@@ -127,44 +147,47 @@ class FallDetector:
             # -----------------------------
             self.buffer.update(person_id, feature)
 
-            # 序列不足30帧
+            # 序列不足30帧 → 占位返回
             if not self.buffer.is_ready(person_id):
 
                 results.append({
                     "id": person_id,
                     "bbox": bbox,
-                    "safe": None,
-                    "danger": None,
-                    "label": None
+                    "risk": None,
+                    "time": None,
+                    "label": None,
+                    "state": "SAFE"
                 })
 
                 continue
 
             # -----------------------------
-            # 获取序列
+            # 拼接运动特征 (30, 171)
             # -----------------------------
-            sequence = self.buffer.get_sequence(person_id)
+            sequence = build_motion_feature(self.buffer, person_id)
 
             # -----------------------------
             # LSTM预测
             # -----------------------------
+            # 当前模型 (lstm_multitask.pt) 已用 171 维特征训练，
+            # 与 FeatureBuilder 57 维 + 运动拼接 (30,171) 匹配。
             pred = self.classifier.predict(sequence)
 
-            risk = self.risk_engine.update(
+            risk_result = self.risk_engine.update(
                 person_id,
-                pred["danger"]
+                pred["risk"]
             )
 
             results.append({
                 "id": person_id,
                 "bbox": bbox,
-                "safe": pred["safe"],
-                "danger": pred["danger"],
+                "risk": pred["risk"],
+                "time": pred["time"],
                 "label": pred["label"],
 
-                # 🔥 新增
-                "risk_score": risk["risk_score"],
-                "state": risk["state"]
+                # RiskEngine 输出
+                "risk_score": risk_result["risk_score"],
+                "state": risk_result["state"]
             })
 
         return results
@@ -174,6 +197,8 @@ class FallDetector:
     # ==================================================
     def reset(self):
         """
-        清空缓存
+        清空所有缓存
         """
         self.buffer.clear()
+        self.tracker.reset()
+        self.risk_engine.reset()

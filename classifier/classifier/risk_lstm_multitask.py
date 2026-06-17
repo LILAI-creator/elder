@@ -14,7 +14,7 @@ class RiskLSTM(nn.Module):
     """
 
     def __init__(self,
-                 input_dim=102,      # 每帧特征维度（x,y,v,a等拼接）
+                 input_dim=171,      # 每帧特征维度（x,y,conf + 几何特征 等拼接）
                  hidden_dim=128,     # LSTM隐藏状态维度（时序表达能力）
                  num_layers=2,       # LSTM堆叠层数（增强时序建模能力）
                  dropout=0.2):       # 防止过拟合

@@ -56,7 +56,7 @@ def train():
     # ==================================================
     # 5️⃣ 初始化模型
     # ==================================================
-    model = RiskLSTM(input_dim=102).to(device)
+    model = RiskLSTM(input_dim=171).to(device)
     # 作用：
     # - 创建LSTM多任务模型
     # - 放到GPU/CPU上

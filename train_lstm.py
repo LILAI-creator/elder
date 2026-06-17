@@ -28,7 +28,7 @@ class FallDataset(Dataset):
 
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size=102, hidden_size=128, num_layers=2):
+    def __init__(self, input_size=171, hidden_size=128, num_layers=2):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_size,

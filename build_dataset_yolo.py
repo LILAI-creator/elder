@@ -9,6 +9,8 @@ import numpy as np
 from ultralytics import YOLO
 from glob import glob
 
+from features.feature_builder import FeatureBuilder
+
 ANNOTATION_BASE = r"D:\my_datasets\Le2i\Le2i\Le2i"
 KEYPOINTS_OUTPUT = r"D:\my_datasets\Le2i\yolo_keypoints"
 MODEL_PATH = r"D:\myproject\elder\models\yolo11n-pose.pt"
@@ -16,6 +18,8 @@ MODEL_PATH = r"D:\myproject\elder\models\yolo11n-pose.pt"
 WINDOW_SIZE = 30
 STRIDE = 5
 NORMAL_TIME = 999
+PRE_FALL = 120  # 跌倒开始前多少帧开始标记风险
+MAX_TIME = 60    # risk 从 0→1 的帧数（越小越陡，预警越早）
 
 SCENES = {
     "Coffee_room_01": {
@@ -85,26 +89,31 @@ def extract_keypoints_from_video(model, video_path):
     return all_keypoints, all_confs
 
 
-def compute_velocity(keypoints):
-    velocity = np.zeros_like(keypoints)
-    velocity[1:] = keypoints[1:] - keypoints[:-1]
-    return velocity
+def build_features(keypoints, confs):
+    """
+    keypoints: (T, 17, 2)
+    confs:     (T, 17)
 
-
-def compute_acceleration(velocity):
-    acceleration = np.zeros_like(velocity)
-    acceleration[1:] = velocity[1:] - velocity[:-1]
-    return acceleration
-
-
-def build_features(keypoints):
+    Returns: features (T, 171) = [pos(57) | vel(57) | acc(57)]
+    """
     T = keypoints.shape[0]
-    velocity = compute_velocity(keypoints)
-    acceleration = compute_acceleration(velocity)
-    keypoints_flat = keypoints.reshape(T, 34)
-    velocity_flat = velocity.reshape(T, 34)
-    acceleration_flat = acceleration.reshape(T, 34)
-    return np.concatenate([keypoints_flat, velocity_flat, acceleration_flat], axis=1)
+
+    # 逐帧用 FeatureBuilder 构建 57 维特征
+    feat_list = []
+    for t in range(T):
+        f = FeatureBuilder.build(keypoints[t], confs[t])
+        feat_list.append(f)
+    pos = np.stack(feat_list, axis=0)  # (T, 57)
+
+    # 速度
+    vel = np.zeros_like(pos)
+    vel[1:] = pos[1:] - pos[:-1]
+
+    # 加速度
+    acc = np.zeros_like(vel)
+    acc[1:] = vel[1:] - vel[:-1]
+
+    return np.concatenate([pos, vel, acc], axis=1)  # (T, 171)
 
 
 def main():
@@ -144,7 +153,7 @@ def main():
                 np.save(kp_save_path, keypoints)
                 np.save(conf_save_path, confs)
 
-            features = build_features(keypoints)
+            features = build_features(keypoints, confs)
             T = features.shape[0]
 
             if not is_fall:
@@ -157,7 +166,7 @@ def main():
                     })
                 stats["normal"] += len(range(0, T - WINDOW_SIZE + 1, STRIDE))
             else:
-                pre_fall = max(0, fall_start - 90)
+                pre_fall = max(0, fall_start - PRE_FALL)
                 for start in range(0, T - WINDOW_SIZE + 1, STRIDE):
                     end = start + WINDOW_SIZE
                     x = features[start:end]
@@ -169,7 +178,8 @@ def main():
                         stats["fall_after"] += 1
                     elif last_frame_idx >= pre_fall:
                         time = max(0, fall_end - 1 - last_frame_idx)
-                        risk = 1.0 / (1.0 + time * 0.1)
+                        # 线性衰减: 距跌倒 MAX_TIME 帧时 risk=0，跌倒瞬间 risk=1
+                        risk = max(0.0, 1.0 - time / MAX_TIME)
                         stats["fall_process"] += 1
                     else:
                         risk = 0.0

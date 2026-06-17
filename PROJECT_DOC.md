@@ -10,7 +10,7 @@
 |------|------|
 | 实时姿态提取 | YOLO11n-Pose，17个COCO关键点，单帧推理 |
 | 多目标跟踪 | Centroid Tracking，为每人分配固定ID |
-| 时序动作分析 | 2层LSTM，30帧滑动窗口，102维特征输入 |
+| 时序动作分析 | 2层LSTM，30帧滑动窗口，171维特征输入 |
 | 多任务预测 | 同时输出risk(跌倒概率)和time(距跌倒时间) |
 | 风险评估 | EMA平滑 + 连续触发 + 三态状态机(SAFE/WARNING/DANGER) |
 
@@ -50,29 +50,29 @@ Camera Frame (BGR)
                │
                ▼
 ┌─────────────────────────────────┐
-│  3. FeatureBuilder              │  关键点展平为34维特征
-│     pose/pose_extractor.py      │  输入: keypoints(17,2)
-│     build_feature()             │  输出: feature(34,)
+│  3. FeatureBuilder              │  关键点展平为57维特征
+│     features/feature_builder.py │  输入: keypoints(17,2)
+│     build()                     │  输出: feature(57,) = 51基础 + 6几何
 └──────────────┬──────────────────┘
                │
                ▼
 ┌─────────────────────────────────┐
 │  4. SequenceBuffer              │  30帧deque缓存 + 速度/加速度计算
-│     sequence/sequence_buffer.py │  输入: (person_id, feature(34,))
-│                                 │  输出: raw(30,34), vel(30,34), acc(30,34)
+│     sequence/sequence_buffer.py │  输入: (person_id, feature(57,))
+│                                 │  输出: raw(30,57), vel(30,57), acc(30,57)
 └──────────────┬──────────────────┘
                │
                ▼
 ┌─────────────────────────────────┐
 │  5. Feature Concatenation       │  拼接 [位置, 速度, 加速度]
-│     realtime_detect.py          │  输入: raw(30,34), vel(30,34), acc(30,34)
-│     build_102_feature()         │  输出: sequence(30,102)
+│     realtime_detect.py          │  输入: raw(30,57), vel(30,57), acc(30,57)
+│     build_motion_feature()      │  输出: sequence(30,171)
 └──────────────┬──────────────────┘
                │
                ▼
 ┌─────────────────────────────────┐
 │  6. LSTMClassifier              │  多任务LSTM推理
-│     classifier/lstm_classifier.py│  输入: sequence(30,102)
+│     classifier/lstm_classifier.py│  输入: sequence(30,171)
 │                                 │  输出: {risk: float, time: float, label: int}
 └──────────────┬──────────────────┘
                │
@@ -150,12 +150,12 @@ D:\myproject\elder\
 
 | 编号 | 部位 | 编号 | 部位 | 编号 | 部位 |
 |------|------|------|------|------|------|
-| 0 | 鼻子 | 6 | 左髋 | 12 | 左髋 |
-| 1 | 左眼 | 7 | 左膝 | 13 | 左膝 |
-| 2 | 右眼 | 8 | 左踝 | 14 | 左踝 |
-| 3 | 左耳 | 9 | 右髋 | 15 | 左脚跟 |
-| 4 | 右耳 | 10 | 右膝 | 16 | 右脚跟 |
-| 5 | 左肩 | 11 | 右踝 | | |
+| 0 | 鼻子 | 6 | 右肩 | 12 | 右髋 |
+| 1 | 左眼 | 7 | 左肘 | 13 | 左膝 |
+| 2 | 右眼 | 8 | 右肘 | 14 | 右膝 |
+| 3 | 左耳 | 9 | 左腕 | 15 | 左踝 |
+| 4 | 右耳 | 10 | 右腕 | 16 | 右踝 |
+| 5 | 左肩 | 11 | 左髋 | | |
 
 **输入/输出**:
 
@@ -171,11 +171,13 @@ D:\myproject\elder\
 ]
 ```
 
-**特征构建** (`build_feature`方法):
+**特征构建** (`FeatureBuilder.build`方法):
 
 ```
-keypoints(17,2) → reshape → feature(34,)
+keypoints(17,2) + confs(17,) → FeatureBuilder.build() → feature(57,)
 ```
+
+57 维 = 17×(x, y, confidence) = 51 维基础 + 6 维几何特征（重心高度、躯干倾斜角、左/右膝角、双脚距离、人体高度）
 
 ### 3.2 PersonTracker - 多目标跟踪
 
@@ -212,41 +214,41 @@ keypoints(17,2) → reshape → feature(34,)
 
 | 方法 | 输入 | 输出 | 说明 |
 |------|------|------|------|
-| `update(person_id, feature)` | (34,) | - | 追加一帧特征到缓冲区 |
+| `update(person_id, feature)` | (57,) | - | 追加一帧特征到缓冲区 |
 | `is_ready(person_id)` | - | bool | 缓冲区是否已满30帧 |
-| `get_sequence(person_id)` | - | (30,34) | 获取原始位置序列 |
-| `get_velocity(person_id)` | - | (30,34) | 计算帧间速度: v[t] = pos[t] - pos[t-1] |
-| `get_acceleration(person_id)` | - | (30,34) | 计算帧间加速度: a[t] = v[t] - v[t-1] |
+| `get_sequence(person_id)` | - | (30,57) | 获取原始位置序列 |
+| `get_velocity(person_id)` | - | (30,57) | 计算帧间速度: v[t] = pos[t] - pos[t-1] |
+| `get_acceleration(person_id)` | - | (30,57) | 计算帧间加速度: a[t] = v[t] - v[t-1] |
 
 **速度/加速度计算**:
 
 ```
-位置:  pos[t] = keypoints[t]                    (17×2 = 34维)
-速度:  vel[t] = pos[t] - pos[t-1]  (t≥1)       (34维)
+位置:  pos[t] = feature[t]                      (57维)
+速度:  vel[t] = pos[t] - pos[t-1]  (t≥1)       (57维)
        vel[0] = 0
-加速度: acc[t] = vel[t] - vel[t-1]  (t≥1)       (34维)
+加速度: acc[t] = vel[t] - vel[t-1]  (t≥1)       (57维)
        acc[0] = 0
 ```
 
 **异常过滤**: 自动过滤NaN值和shape不匹配的特征
 
-### 3.4 特征拼接 - 102维特征构建
+### 3.4 特征拼接 - 171维特征构建
 
-**位置**: `realtime_detect.py` 中的 `build_102_feature()`
+**位置**: `realtime_detect.py` 中的 `build_motion_feature()`
 
 **拼接方式**:
 
 ```
-sequence(30,102) = [pos(30,34) | vel(30,34) | acc(30,34)]
+sequence(30,171) = [pos(30,57) | vel(30,57) | acc(30,57)]
 ```
 
 | 维度区间 | 内容 | 维度 |
 |----------|------|------|
-| 0~33 | 17个关键点的(x,y)坐标 | 34 |
-| 34~67 | 17个关键点的(x,y)速度 | 34 |
-| 68~101 | 17个关键点的(x,y)加速度 | 34 |
+| 0~56 | 17关键点(x,y,conf) + 6几何特征 | 57 |
+| 57~113 | 17关键点(x,y,conf) + 6几何特征 速度 | 57 |
+| 114~170 | 17关键点(x,y,conf) + 6几何特征 加速度 | 57 |
 
-**设计意图**: 位置描述"在哪里"，速度描述"往哪走"，加速度描述"变化趋势"。跌倒时加速度会出现剧烈变化，是关键区分信号。
+**设计意图**: 位置描述"在哪里"，速度描述"往哪走"，加速度描述"变化趋势"。跌倒时加速度会出现剧烈变化，6个几何特征的运动变化（如躯干倾斜角的加速度）是关键的跌倒前兆信号。
 
 ### 3.5 LSTMClassifier - 多任务LSTM模型
 
@@ -255,10 +257,10 @@ sequence(30,102) = [pos(30,34) | vel(30,34) | acc(30,34)]
 **模型结构**:
 
 ```
-Input: (batch, 30, 102)
+Input: (batch, 30, 171)
     │
     ▼
-LSTM Layer 1 (input=102, hidden=128, dropout=0.2)
+LSTM Layer 1 (input=171, hidden=128, dropout=0.2)
     │
     ▼
 LSTM Layer 2 (input=128, hidden=128, dropout=0.2)
@@ -363,7 +365,7 @@ Le2i原始视频(.avi)
 YOLO11n-Pose 逐帧提取 → keypoints(T, 17, 2) + confs(T, 17)
     │                              ↓ 缓存到 yolo_keypoints/ 目录
     ▼
-计算速度/加速度 → 拼接 [pos, vel, acc] → features(T, 102)
+FeatureBuilder 逐帧构建 57 维特征 → 拼接 [pos, vel, acc] → features(T, 171)
     │
     ▼
 滑动窗口切分 (window=30, stride=5)
@@ -372,24 +374,24 @@ YOLO11n-Pose 逐帧提取 → keypoints(T, 17, 2) + confs(T, 17)
 计算 risk 和 time 标签
     │
     ▼
-保存 x.npy(7243,30,102), risk.npy(7243,1), time.npy(7243,1)
+保存 x.npy(7243,30,171), risk.npy(7243,1), time.npy(7243,1)
 ```
 
 ### 4.3 标签计算规则
 
-**关键参数**: `pre_fall = fall_start - 90`（跌倒开始前90帧起算"快要跌倒"）
+**关键参数**: `pre_fall = fall_start − 120`（跌倒开始前120帧起算"快要跌倒"），`MAX_TIME = 60`
 
 | 帧区间 | risk | time | 类别 |
 |--------|------|------|------|
-| 末帧 < fall_start - 90 | 0 | 999 | normal (正常) |
-| fall_start - 90 ≤ 末帧 < fall_end | 1/(1+time) | fall_end - 1 - 末帧 | fall_process (跌倒过程) |
+| 末帧 < fall_start − 120 | 0 | 999 | normal (正常) |
+| fall_start − 120 ≤ 末帧 < fall_end | 1.0 − time/60 | fall_end − 1 − 末帧 | fall_process (跌倒过程) |
 | 末帧 ≥ fall_end | 1 | 0 | fall_after (跌倒后) |
 
-**risk公式**: `risk = 1 / (1 + time)`
+**risk公式**: `risk = max(0.0, 1.0 − time / 60)` — 线性衰减
 
 - time=0 → risk=1.0 (已跌倒)
-- time=10 → risk=0.091 (10帧后跌倒)
-- time=90 → risk=0.011 (90帧后跌倒)
+- time=10 → risk≈0.833 (10帧后跌倒)
+- time=60 → risk=0.0 (60帧后跌倒，risk边界)
 
 **设计意图**: risk是一个连续概率值，越接近跌倒完成时刻越趋近1，实现渐进式预警而非二值跳变。
 
@@ -411,7 +413,7 @@ YOLO11n-Pose 逐帧提取 → keypoints(T, 17, 2) + confs(T, 17)
 | BATCH_SIZE | 128 | 批大小 |
 | LR | 1e-3 | 初始学习率 |
 | WINDOW_SIZE | 30 | 输入序列长度 |
-| FEATURE_DIM | 102 | 输入特征维度 |
+| FEATURE_DIM | 171 | 输入特征维度 |
 | HIDDEN_SIZE | 128 | LSTM隐藏层大小 |
 | NUM_LAYERS | 2 | LSTM层数 |
 | DROPOUT | 0.2 | LSTM dropout |
@@ -478,11 +480,11 @@ python realtime_detect.py
 
 ```
 1. 读取一帧 → PoseExtractor提取关键点
-2. keypoints(17,2) → reshape → feature(34,)
+2. keypoints(17,2) + confs(17,) → FeatureBuilder.build() → feature(57,)
 3. SequenceBuffer.update(person_id, feature) → 缓存30帧
 4. 缓冲区满30帧后:
-   a. 获取 raw(30,34), vel(30,34), acc(30,34)
-   b. 拼接为 sequence(30,102)
+   a. 获取 raw(30,57), vel(30,57), acc(30,57)
+   b. 拼接为 sequence(30,171)
    c. Z-score归一化
    d. LSTM推理 → {risk, time, label}
 5. 可视化: 绘制bbox + 状态 + risk值 + time值
@@ -504,12 +506,13 @@ python realtime_detect.py
 
 ## 7. 关键设计决策
 
-### 7.1 为什么用102维特征而非34维？
+### 7.1 为什么用171维特征而非简单坐标？
 
-34维只包含位置信息，无法区分"站着不动"和"正在跌倒但恰好此刻位置正常"。加入速度和加速度后：
+仅用17关键点的(x,y)坐标（34维）无法区分"站着不动"和"正在跌倒但恰好此刻位置正常"。171维 = 3 × 57，其中57维含6个物理意义的几何特征（重心高度、躯干倾斜角、膝角、双脚距离、体高）。加入速度和加速度后：
 
 - **速度**: 捕获运动方向和速率，跌倒时y方向速度会突然增大
 - **加速度**: 捕获运动趋势变化，跌倒瞬间加速度会出现尖峰
+- **几何特征的速度/加速度**: 如躯干倾斜角的加速度，直接捕捉"从直立到倾倒"的瞬间
 
 ### 7.2 为什么risk用1/(1+time)而非0/1二值？
 
@@ -520,12 +523,12 @@ python realtime_detect.py
 - 离跌倒10帧: risk ≈ 0.091 (高度预警)
 - 已跌倒: risk = 1.0 (确认跌倒)
 
-### 7.3 为什么pre_fall = fall_start - 90？
+### 7.3 为什么pre_fall = fall_start − 120？
 
-跌倒是一个渐进过程，在fall_start之前人体已经出现不稳定姿态。90帧(约3.6秒@25fps)的提前量确保：
+跌倒是一个渐进过程，在fall_start之前人体已经出现不稳定姿态。120帧(约4.8秒@25fps)的提前量 + MAX_TIME=60帧的线性risk区间，确保：
 
 1. 模型能学习到跌倒前的预兆信号
-2. 实际应用中有足够的预警时间
+2. 实际应用中有足够的预警时间（~2.4秒 @25fps的risk渐变区间）
 3. 避免将正常行走误判为跌倒前兆
 
 ### 7.4 为什么time损失只对fall样本计算？
@@ -544,10 +547,10 @@ normal样本的time=999是占位值，没有实际意义。如果参与训练会
 
 ```
 帧 0~17:    keypoints全为0 (人未进入画面)
-帧 18~47:   正常行走 (末帧 < fall_start-90=0, 但pre_fall=max(0,-42)=0)
+帧 18~47:   正常行走 (pre_fall = max(0, 48-120) = 0)
             → risk=0, time=999
 帧 48~79:   跌倒过程
-            → risk=1/(1+(79-末帧)), time=79-末帧
+            → risk=1.0-time/60, time=fall_end-1-末帧
 帧 80~156:  跌倒后躺在地上
             → risk=1.0, time=0
 ```

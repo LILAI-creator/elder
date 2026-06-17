@@ -10,6 +10,7 @@ import numpy as np
 from pose.pose_extractor import PoseExtractor
 from sequence.sequence_buffer import SequenceBufferV3
 from classifier.lstm_classifier import LSTMClassifier
+from features.feature_builder import FeatureBuilder
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 POSE_MODEL = os.path.join(MODEL_DIR, "yolo11n-pose.pt")
@@ -18,6 +19,7 @@ NORM_PARAMS = os.path.join(MODEL_DIR, "norm_params.npz")
 
 WINDOW_SIZE = 30
 RISK_THRESHOLD = 0.5
+PLAYBACK_DELAY = 50     # ms, 越小播放越快
 
 
 def build_102_feature(buffer, person_id):
@@ -38,7 +40,7 @@ def draw_result(frame, bbox, result, person_id):
     if label == 1:
         color = (0, 0, 255)
         status = "FALL"
-    elif risk > 0.03:
+    elif risk >= RISK_THRESHOLD:
         color = (0, 165, 255)
         status = "WARNING"
     else:
@@ -49,6 +51,19 @@ def draw_result(frame, bbox, result, person_id):
     cv2.putText(frame, f"ID:{person_id} {status}", (x1, y1 - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
     cv2.putText(frame, f"risk:{risk:.3f} time:{time_val:.1f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     return frame
+
+
+def _check_motion(buffer, person_id, min_displacement=8.0):
+    """检查 buffer 首尾帧位移，低于阈值视为静止"""
+    seq = buffer.get_sequence(person_id)
+    if seq is None:
+        return False
+    hip_y_first = seq[0, 34]   # left_hip y (feature 索引 11*3+1=34)
+    hip_y_last = seq[-1, 34]
+    nose_x_first = seq[0, 0]   # nose x
+    nose_x_last = seq[-1, 0]
+    displacement = np.sqrt((nose_x_last - nose_x_first)**2 + (hip_y_last - hip_y_first)**2)
+    return displacement >= min_displacement
 
 
 def main(video_path=None):
@@ -68,9 +83,13 @@ def main(video_path=None):
         return
 
     print(f"Source: {source_name}")
+    print(f"WINDOW_SIZE={WINDOW_SIZE}, RISK_THRESHOLD={RISK_THRESHOLD}")
     print("Press 'q' to quit\n")
 
     frame_count = 0
+    skip_count = 0
+    person_fell = False     # 是否已检测到跌倒
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -78,34 +97,72 @@ def main(video_path=None):
         frame_count += 1
 
         persons = pose_ext.extract(frame)
+        n_detected = len(persons)
+        n_kept = 0
+        pred_info = ""
 
         for person in persons:
             kpts = person["keypoints"]
+            confs = person.get("keypoints_conf")
             bbox = person["bbox"]
-            feature = kpts.reshape(-1)
+            score = person.get("score", 0)
+            mean_conf = np.mean(confs) if confs is not None else -1
 
-            person_id = 0
+            # --- 低置信度过滤 ---
+            if confs is not None and mean_conf < 0.5:
+                skip_count += 1
+                pred_info += f" | skip(conf={mean_conf:.2f})"
+                continue
+            if score < 0.5:
+                skip_count += 1
+                pred_info += f" | skip(score={score:.2f})"
+                continue
+
+            n_kept += 1
+
+            # --- 始终看作一个人 ---
+            person_id = 1
+            feature = FeatureBuilder.build(kpts, confs=confs)
             buffer.update(person_id, feature)
+            buf_len = len(buffer.buffers.get(person_id, []))
 
+            # --- 推理 + 运动门控 ---
             if buffer.is_ready(person_id):
-                seq_102 = build_102_feature(buffer, person_id)
-                if seq_102 is not None:
-                    result = classifier.predict(seq_102)
-                    frame = draw_result(frame, bbox, result, person_id)
+                if not person_fell and not _check_motion(buffer, person_id, min_displacement=8.0):
+                    result = {"risk": 0.0, "time": 0.0, "label": 0}
+                    pred_info += f" | buf={buf_len} STATIC"
+                else:
+                    seq_102 = build_102_feature(buffer, person_id)
+                    if seq_102 is not None:
+                        result = classifier.predict(seq_102)
+                        if result["risk"] > 0.5:
+                            person_fell = True
+                        pred_info += (f" | buf={buf_len} "
+                                      f"risk={result['risk']:.3f} time={result['time']:.1f} label={result['label']}")
+                    else:
+                        result = {"risk": 0.0, "time": 0.0, "label": 0}
+                        pred_info += f" | buf={buf_len} seq=None"
 
-        cv2.putText(frame, f"Frame: {frame_count}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                frame = draw_result(frame, bbox, result, person_id)
+            else:
+                pred_info += f" | buf={buf_len}/{WINDOW_SIZE}"
+
+        # --- 每帧输出 ---
+        print(f"[F{frame_count:04d}] detect={n_detected} keep={n_kept}{pred_info}")
+
+        cv2.putText(frame, f"Frame: {frame_count}",
+                    (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+        if frame_count == 1:
+            cv2.namedWindow("Fall Detection", cv2.WINDOW_NORMAL)
         cv2.imshow("Fall Detection", frame)
 
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        # delay = max(1, int(1000 / fps)) if fps > 0 else 33
-        # 播放速度 
-        delay = 100
-        if cv2.waitKey(delay) & 0xFF == ord("q"):
+        if cv2.waitKey(PLAYBACK_DELAY) & 0xFF == ord("q"):
             break
 
     cap.release()
     cv2.destroyAllWindows()
-    print(f"Processed {frame_count} frames")
+    print(f"Processed {frame_count} frames, skipped {skip_count} low-conf frames")
 
 
 if __name__ == "__main__":

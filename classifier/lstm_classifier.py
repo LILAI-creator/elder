@@ -2,8 +2,8 @@
 lstm_classifier.py
 
 输入:
-    sequence shape=(30, 102)
-    102 = 17*2坐标 + 17*2速度 + 17*2加速度
+    sequence shape=(30, 171)
+    171 = 57(位置:17×3+6几何) + 57(速度) + 57(加速度)
 
 输出:
     {
@@ -19,7 +19,7 @@ import torch.nn as nn
 
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size=102, hidden_size=128, num_layers=2):
+    def __init__(self, input_size=171, hidden_size=128, num_layers=2):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -63,8 +63,8 @@ class LSTMClassifier:
     @torch.no_grad()
     def predict(self, sequence):
         sequence = np.asarray(sequence, dtype=np.float32)
-        if sequence.shape != (30, 102):
-            raise ValueError(f"Expected (30, 102), got {sequence.shape}")
+        if sequence.shape != (30, 171):
+            raise ValueError(f"Expected (30, 171), got {sequence.shape}")
 
         sequence = self.normalize(sequence)
         x = torch.tensor(sequence, dtype=torch.float32).unsqueeze(0).to(self.device)

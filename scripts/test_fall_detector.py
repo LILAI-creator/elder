@@ -85,9 +85,10 @@ def main():
 
             print(
                 f"ID={r['id']} "
-                f"Safe={r.get('safe')} "
-                f"Danger={r.get('danger')} "
-                f"Label={r.get('label')}"
+                f"risk={r.get('risk')} "
+                f"time={r.get('time')} "
+                f"label={r.get('label')} "
+                f"state={r.get('state')}"
             )
 
     print("\nTest Finished")
