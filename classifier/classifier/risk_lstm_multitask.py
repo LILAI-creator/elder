@@ -7,7 +7,7 @@ class RiskLSTM(nn.Module):
     工业级跌倒检测 LSTM 多任务模型（稳定版）
 
     设计目标：
-    1. 输入30帧人体序列特征 (102维/帧)
+    1. 输入 T 帧人体序列特征 (171维/帧), T ∈ [1, 90]
     2. 输出：
         - risk：跌倒风险（分类 logits）
         - time：距离跌倒时间（回归）
@@ -25,7 +25,7 @@ class RiskLSTM(nn.Module):
         # 1️⃣ LSTM 时序编码器（核心模块）
         # ==================================================
         self.lstm = nn.LSTM(
-            input_size=input_dim,       # 输入特征维度 = 102
+            input_size=input_dim,       # 输入特征维度 = 171
             hidden_size=hidden_dim,     # 输出隐藏状态维度 = 128
             num_layers=num_layers,      # 2层LSTM叠加（增强表达能力）
             batch_first=True,           # 输入格式：(B, T, F)
@@ -72,10 +72,9 @@ class RiskLSTM(nn.Module):
         前向传播
 
         参数:
-            x: (B, 30, 102)
+            x: (B, T, 171)
                B = batch size
-               30 = 时间窗口帧数
-               102 = 每帧特征维度
+               T = 时间窗口帧数（≤90，支持变长）
 
         返回:
             risk: (B, 1) logits（未sigmoid）
@@ -86,7 +85,7 @@ class RiskLSTM(nn.Module):
         # 1️⃣ LSTM编码时序信息
         # ==================================================
         out, _ = self.lstm(x)
-        # out shape: (B, T=30, H=128)
+        # out shape: (B, T, H=128)
         # 每个时间步都有一个隐藏状态表示
 
         # ==================================================
@@ -94,7 +93,7 @@ class RiskLSTM(nn.Module):
         # ==================================================
         feat_seq = out.mean(dim=1)
         # shape: (B, 128)
-        # 含义：对30帧做平均 → 提取整体动作语义
+        # 含义：对 T 帧做平均 → 提取整体动作语义
         # 优点：
         #   - 比 last-step 更稳定
         #   - 不依赖最后一帧（减少噪声影响）

@@ -1,3 +1,16 @@
+"""
+LSTM 多任务跌倒检测 — 训练脚本
+
+输入数据:
+    x.npy    — shape (N, T, 171), T=90 帧窗口
+    risk.npy — shape (N, 1)
+    time.npy — shape (N, 1)
+
+输出:
+    models/lstm_multitask.pt   — 模型权重
+    models/norm_params.npz     — 归一化参数 + seq_len
+"""
+
 import os
 import numpy as np
 import torch
@@ -9,9 +22,26 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EPOCHS = 50
 BATCH_SIZE = 128
 LR = 1e-3
+SEQ_LEN = 90  # 时间窗口帧数
 
 DATASET_DIR = r"D:\my_datasets\Le2i\processed"
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
+
+
+def collate_variable_lengths(batch):
+    """支持变长序列的 batch 组装：按实际长度 padding + mask"""
+    xs, risks, times = zip(*batch)
+    lengths = torch.tensor([len(x) for x in xs], dtype=torch.long)
+    max_len = lengths.max().item()
+
+    # padding 到 batch 内最大长度
+    xs_padded = torch.zeros(len(xs), max_len, xs[0].shape[-1])
+    for i, x in enumerate(xs):
+        xs_padded[i, : len(x)] = x
+
+    risks = torch.stack(risks)
+    times = torch.stack(times)
+    return xs_padded, risks, times, lengths
 
 
 class FallDataset(Dataset):
@@ -40,9 +70,20 @@ class LSTMModel(nn.Module):
         self.risk_head = nn.Linear(hidden_size, 1)
         self.time_head = nn.Linear(hidden_size, 1)
 
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        out = out[:, -1, :]
+    def forward(self, x, lengths=None):
+        """
+        x: (B, T, 171)
+        lengths: (B,) 每条序列的实际帧数，None 表示全部为 T
+        """
+        out, _ = self.lstm(x)  # (B, T, H)
+
+        if lengths is not None:
+            # 按实际长度取最后一步（忽略 padding）
+            idx = (lengths - 1).long().view(-1, 1, 1).expand(-1, 1, out.shape[-1])
+            out = out.gather(1, idx).squeeze(1)  # (B, H)
+        else:
+            out = out[:, -1, :]  # (B, H)
+
         risk = torch.sigmoid(self.risk_head(out))
         time = torch.relu(self.time_head(out))
         return risk.squeeze(-1), time.squeeze(-1)
@@ -54,12 +95,21 @@ def train_one_epoch(model, loader, criterion_risk, criterion_time, optimizer, la
     total_risk_loss = 0
     total_time_loss = 0
     n = 0
-    for X_batch, risk_batch, time_batch in loader:
+
+    for batch in loader:
+        if len(batch) == 4:
+            X_batch, risk_batch, time_batch, lengths = batch
+            lengths = lengths.to(DEVICE)
+        else:
+            X_batch, risk_batch, time_batch = batch
+            lengths = None
+
         X_batch = X_batch.to(DEVICE)
         risk_batch = risk_batch.to(DEVICE)
         time_batch = time_batch.to(DEVICE)
 
-        pred_risk, pred_time = model(X_batch)
+        pred_risk, pred_time = model(X_batch, lengths)
+
         loss_risk = criterion_risk(pred_risk, risk_batch)
 
         fall_mask = risk_batch > 0
@@ -91,13 +141,22 @@ def evaluate(model, loader, criterion_risk, criterion_time, lambda_time):
     all_risk = []
     all_time = []
     n = 0
+
     with torch.no_grad():
-        for X_batch, risk_batch, time_batch in loader:
+        for batch in loader:
+            if len(batch) == 4:
+                X_batch, risk_batch, time_batch, lengths = batch
+                lengths = lengths.to(DEVICE)
+            else:
+                X_batch, risk_batch, time_batch = batch
+                lengths = None
+
             X_batch = X_batch.to(DEVICE)
             risk_batch = risk_batch.to(DEVICE)
             time_batch = time_batch.to(DEVICE)
 
-            pred_risk, pred_time = model(X_batch)
+            pred_risk, pred_time = model(X_batch, lengths)
+
             loss_risk = criterion_risk(pred_risk, risk_batch)
 
             fall_mask = risk_batch > 0
@@ -130,11 +189,31 @@ def evaluate(model, loader, criterion_risk, criterion_time, lambda_time):
 
 def main():
     print(f"Device: {DEVICE}")
+    print(f"SEQ_LEN: {SEQ_LEN}")
 
     X = np.load(os.path.join(DATASET_DIR, "x.npy"))
     risk = np.load(os.path.join(DATASET_DIR, "risk.npy")).squeeze(-1)
     time = np.load(os.path.join(DATASET_DIR, "time.npy")).squeeze(-1)
     print(f"Loaded X: {X.shape}, risk: {risk.shape}, time: {time.shape}")
+
+    # --- 验证数据窗口 ---
+    T_data = X.shape[1]
+    if T_data != SEQ_LEN:
+        print(f"⚠️ 数据窗口={T_data}, 期望={SEQ_LEN}。按实际数据窗口={T_data} 训练。")
+        actual_seq_len = T_data
+    else:
+        print(f"✅ 数据窗口={T_data} 与配置一致")
+        actual_seq_len = T_data
+
+    # --- 检查是否有变长数据 ---
+    T_unique = set()
+    for i in range(len(X)):
+        T_unique.add(X[i].shape[0] if hasattr(X[i], 'shape') else len(X[i]))
+    use_variable_length = len(T_unique) > 1
+    if use_variable_length:
+        print(f"🔀 检测到变长数据，帧数分布: {sorted(T_unique)[:10]}...")
+    else:
+        print(f"📐 固定窗口: {T_unique.pop()} 帧")
 
     indices = np.arange(len(X))
     train_idx, test_idx = train_test_split(indices, test_size=0.2, random_state=42)
@@ -151,11 +230,15 @@ def main():
     print(f"Train: {X_train.shape}, Test: {X_test.shape}")
     print(f"Normalized: mean≈{X_train.mean():.4f}, std≈{X_train.std():.4f}")
 
+    collate_fn = collate_variable_lengths if use_variable_length else None
+
     train_loader = DataLoader(
-        FallDataset(X_train, risk_train, time_train), batch_size=BATCH_SIZE, shuffle=True
+        FallDataset(X_train, risk_train, time_train),
+        batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn
     )
     test_loader = DataLoader(
-        FallDataset(X_test, risk_test, time_test), batch_size=BATCH_SIZE, shuffle=False
+        FallDataset(X_test, risk_test, time_test),
+        batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_fn
     )
 
     lambda_time = 0.1
@@ -190,6 +273,7 @@ def main():
                 os.path.join(MODEL_DIR, "norm_params.npz"),
                 mean=mean.squeeze(),
                 std=std.squeeze(),
+                seq_len=actual_seq_len,
             )
 
     model.load_state_dict(torch.load(os.path.join(MODEL_DIR, "lstm_multitask.pt"), map_location=DEVICE))
@@ -201,7 +285,7 @@ def main():
     time_mae = np.abs(pred_time - true_time).mean()
     fall_mask = true_risk > 0
     normal_mask = true_risk == 0
-    print(f"\n=== Test Results ===")
+    print(f"\n=== Test Results (T={actual_seq_len}) ===")
     print(f"Risk MAE: {risk_mae:.4f}")
     print(f"Time MAE: {time_mae:.4f}")
     if fall_mask.sum() > 0:

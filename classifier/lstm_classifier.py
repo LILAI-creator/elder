@@ -53,9 +53,10 @@ class LSTMClassifier:
         norm = np.load(norm_path)
         self.mean = norm["mean"].astype(np.float32)
         self.std = norm["std"].astype(np.float32)
+        self.seq_len = int(norm.get("seq_len", 90)) if "seq_len" in norm else 90
 
         print(f"[Classifier] Model loaded: {model_path}")
-        print(f"[Classifier] Norm loaded: {norm_path}")
+        print(f"[Classifier] Norm loaded: {norm_path}, seq_len={self.seq_len}")
 
     def normalize(self, sequence):
         return (sequence - self.mean) / self.std

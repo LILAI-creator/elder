@@ -125,7 +125,7 @@ def train():
             # --------------------------
             # 取数据并搬到设备
             # --------------------------
-            x = batch["x"].to(device)             # (B, 30, 102)
+            x = batch["x"].to(device)             # (B, T, 171)
             y_risk = batch["risk"].to(device)     # (B, 1)
             y_time = batch["time"].to(device)     # (B, 1)
 
