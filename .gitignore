@@ -3,5 +3,6 @@ models/
 *.npy
 *.pt
 *.avi
+*.rar
 __pycache__/
 runs/

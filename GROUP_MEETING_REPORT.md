@@ -1,6 +1,6 @@
 # 🧠 老年人跌倒风险预测系统 — 组会汇报
 
-> **版本**: v3.1 | **日期**: 2026-06-15 | **汇报人**: LILAI-creator
+
 
 ---
 
@@ -133,7 +133,7 @@ risk = 1 - time / MAX_TIME    （线性衰减）
 
 | 头部 | 任务 | Loss | 输出 |
 |------|------|------|------|
-| risk_head | 二分类 | BCEWithLogitsLoss | 跌倒概率 |
+| risk_head | 回归 | BCEWithLogitsLoss | 跌倒概率 |
 | time_head | 回归 | SmoothL1Loss | 距跌倒帧数 |
 
 **关键设计**: time loss 只对 fall 样本计算（normal 样本的 time=999 是占位值，无意义）。
@@ -307,8 +307,8 @@ python realtime_detect.py
 
 | 状态 | 颜色 | risk 阈值 | 含义 |
 |------|------|-----------|------|
-| SAFE | 🟢 绿色 | risk < 0.20 | 正常 |
-| WARNING | 🟠 橙色 | 0.20 ≤ risk < 0.80 | 注意 |
+| SAFE | 🟢 绿色 | risk < 0.50 | 正常 |
+| WARNING | 🟠 橙色 | 0.50 ≤ risk < 0.80 | 注意 |
 | FALL | 🔴 红色 | risk ≥ 0.80 | 危险 |
 
 画面显示：边界框 + 人员 ID + 状态 + risk 值 + time 值。
@@ -381,3 +381,9 @@ elder/
 ## 十、一句话总结
 
 > **摄像头 → YOLO 17 个骨架关键点 → 57 维几何增强特征（含重心/倾斜角/膝角） → 30 帧运动序列（位置+速度+加速度, 171 维） → 2 层 LSTM 双头预测（risk + time） → EMA 平滑状态机，在跌倒前约 3.6 秒实现渐进式风险预警，Risk MAE 低至 0.034。**
+
+
+
+1. 输出时间， 图片
+2. 时序模型推风险，time
+3. 调研

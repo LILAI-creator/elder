@@ -19,7 +19,7 @@ NORM_PARAMS = os.path.join(MODEL_DIR, "norm_params.npz")
 
 WINDOW_SIZE = 30
 RISK_THRESHOLD = 0.5
-PLAYBACK_DELAY = 50     # ms, 越小播放越快
+PLAYBACK_DELAY = 100     # ms, 越小播放越快
 
 
 def build_102_feature(buffer, person_id):
@@ -37,7 +37,7 @@ def draw_result(frame, bbox, result, person_id):
     time_val = result["time"]
     label = result["label"]
 
-    if label == 1:
+    if risk >= 0.8:
         color = (0, 0, 255)
         status = "FALL"
     elif risk >= RISK_THRESHOLD:
@@ -53,8 +53,8 @@ def draw_result(frame, bbox, result, person_id):
     return frame
 
 
-def _check_motion(buffer, person_id, min_displacement=8.0):
-    """检查 buffer 首尾帧位移，低于阈值视为静止"""
+def _check_motion(buffer, person_id, min_displacement=8.0, max_torso_tilt=30.0):
+    """位移 < 阈值且躯干直立 → 静止站立；位移大或躯干倾斜 → 放行"""
     seq = buffer.get_sequence(person_id)
     if seq is None:
         return False
@@ -63,7 +63,11 @@ def _check_motion(buffer, person_id, min_displacement=8.0):
     nose_x_first = seq[0, 0]   # nose x
     nose_x_last = seq[-1, 0]
     displacement = np.sqrt((nose_x_last - nose_x_first)**2 + (hip_y_last - hip_y_first)**2)
-    return displacement >= min_displacement
+    if displacement >= min_displacement:
+        return True  # 有运动 → 放行给 LSTM
+    # 无运动时检查躯干姿态：倾斜 > 阈值 → 可能躺倒 → 放行
+    torso_angle = abs(seq[-1, 52])  # feature 索引 52 = torso_angle
+    return torso_angle > max_torso_tilt
 
 
 def main(video_path=None):
@@ -88,7 +92,6 @@ def main(video_path=None):
 
     frame_count = 0
     skip_count = 0
-    person_fell = False     # 是否已检测到跌倒
 
     while True:
         ret, frame = cap.read()
@@ -128,15 +131,13 @@ def main(video_path=None):
 
             # --- 推理 + 运动门控 ---
             if buffer.is_ready(person_id):
-                if not person_fell and not _check_motion(buffer, person_id, min_displacement=8.0):
+                if not _check_motion(buffer, person_id, min_displacement=8.0):
                     result = {"risk": 0.0, "time": 0.0, "label": 0}
                     pred_info += f" | buf={buf_len} STATIC"
                 else:
                     seq_102 = build_102_feature(buffer, person_id)
                     if seq_102 is not None:
                         result = classifier.predict(seq_102)
-                        if result["risk"] > 0.5:
-                            person_fell = True
                         pred_info += (f" | buf={buf_len} "
                                       f"risk={result['risk']:.3f} time={result['time']:.1f} label={result['label']}")
                     else:
