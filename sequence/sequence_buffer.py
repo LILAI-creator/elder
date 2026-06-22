@@ -8,13 +8,15 @@ class SequenceBufferV3:
     """
     工业级跌倒趋势缓存器（v3）
 
+    支持任意窗口长度，未满时按实际帧数返回。
+
     输出：
         raw: (T, 57)
         vel: (T, 57)
         acc: (T, 57)
     """
 
-    def __init__(self, seq_len=30):
+    def __init__(self, seq_len=90):
         self.seq_len = seq_len
         self.buffers = {}
 
@@ -41,19 +43,25 @@ class SequenceBufferV3:
         self.buffers[person_id].append(feature)
 
     # ==================================================
-    # 是否准备好
+    # 当前缓存的帧数
     # ==================================================
-    def is_ready(self, person_id):
-        return (
-            person_id in self.buffers and
-            len(self.buffers[person_id]) == self.seq_len
-        )
+    def buffer_len(self, person_id):
+        if person_id not in self.buffers:
+            return 0
+        return len(self.buffers[person_id])
 
     # ==================================================
-    # 原始序列
+    # 是否已满（达到窗口大小）
+    # ==================================================
+    def is_ready(self, person_id):
+        return self.buffer_len(person_id) >= 1
+
+    # ==================================================
+    # 原始序列（未满时按实际帧数返回）
     # ==================================================
     def get_sequence(self, person_id):
-        if not self.is_ready(person_id):
+        n = self.buffer_len(person_id)
+        if n == 0:
             return None
 
         return np.asarray(self.buffers[person_id], dtype=np.float32)
@@ -67,7 +75,8 @@ class SequenceBufferV3:
             return None
 
         vel = np.zeros_like(seq)
-        vel[1:] = seq[1:] - seq[:-1]
+        if len(seq) >= 2:
+            vel[1:] = seq[1:] - seq[:-1]
 
         return vel
 
@@ -80,7 +89,8 @@ class SequenceBufferV3:
             return None
 
         acc = np.zeros_like(vel)
-        acc[1:] = vel[1:] - vel[:-1]
+        if len(vel) >= 2:
+            acc[1:] = vel[1:] - vel[:-1]
 
         return acc
 

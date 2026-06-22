@@ -1,7 +1,8 @@
 """
 视频实时跌倒检测演示
 
-流程: 视频帧 → YOLO Pose(17关键点) → SequenceBuffer(30帧缓存) → 拼接[pos,vel,acc]=(30,102) → LSTM → risk/time/label
+流程: 视频帧 → YOLO Pose(17关键点) → SequenceBuffer(90帧缓存) → 拼接[pos,vel,acc]=(T,171) → LSTM → risk/time/label
+未满90帧时按当前帧数计算。
 """
 
 import os
@@ -17,7 +18,7 @@ POSE_MODEL = os.path.join(MODEL_DIR, "yolo11n-pose.pt")
 LSTM_MODEL = os.path.join(MODEL_DIR, "lstm_multitask.pt")
 NORM_PARAMS = os.path.join(MODEL_DIR, "norm_params.npz")
 
-WINDOW_SIZE = 30
+WINDOW_SIZE = 90
 RISK_THRESHOLD = 0.5
 PLAYBACK_DELAY = 100     # ms, 越小播放越快
 
@@ -133,16 +134,16 @@ def main(video_path=None):
             if buffer.is_ready(person_id):
                 if not _check_motion(buffer, person_id, min_displacement=8.0):
                     result = {"risk": 0.0, "time": 0.0, "label": 0}
-                    pred_info += f" | buf={buf_len} STATIC"
+                    pred_info += f" | buf={buf_len}/{WINDOW_SIZE} STATIC"
                 else:
-                    seq_102 = build_102_feature(buffer, person_id)
-                    if seq_102 is not None:
-                        result = classifier.predict(seq_102)
-                        pred_info += (f" | buf={buf_len} "
+                    seq_171 = build_102_feature(buffer, person_id)
+                    if seq_171 is not None:
+                        result = classifier.predict(seq_171)
+                        pred_info += (f" | buf={buf_len}/{WINDOW_SIZE} "
                                       f"risk={result['risk']:.3f} time={result['time']:.1f} label={result['label']}")
                     else:
                         result = {"risk": 0.0, "time": 0.0, "label": 0}
-                        pred_info += f" | buf={buf_len} seq=None"
+                        pred_info += f" | buf={buf_len}/{WINDOW_SIZE} seq=None"
 
                 frame = draw_result(frame, bbox, result, person_id)
             else:

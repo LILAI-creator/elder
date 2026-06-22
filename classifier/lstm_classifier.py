@@ -2,7 +2,7 @@
 lstm_classifier.py
 
 输入:
-    sequence shape=(30, 171)
+    sequence shape=(T, 171), T ∈ [1, 90]
     171 = 57(位置:17×3+6几何) + 57(速度) + 57(加速度)
 
 输出:
@@ -63,8 +63,9 @@ class LSTMClassifier:
     @torch.no_grad()
     def predict(self, sequence):
         sequence = np.asarray(sequence, dtype=np.float32)
-        if sequence.shape != (30, 171):
-            raise ValueError(f"Expected (30, 171), got {sequence.shape}")
+        T = sequence.shape[0]
+        if sequence.ndim != 2 or sequence.shape[1] != 171 or T < 1:
+            raise ValueError(f"Expected (T, 171) with T>=1, got {sequence.shape}")
 
         sequence = self.normalize(sequence)
         x = torch.tensor(sequence, dtype=torch.float32).unsqueeze(0).to(self.device)
